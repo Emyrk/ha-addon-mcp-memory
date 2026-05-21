@@ -36,4 +36,4 @@ if [ "${ALLOW_ANON}" = "true" ]; then
 fi
 
 echo "[mcp-memory] Starting (backend=${MCP_MEMORY_STORAGE_BACKEND}, log=${LOG_LEVEL})"
-exec memory server --http --host 0.0.0.0 --port 8000
+exec memory server --http --http-host 0.0.0.0 --http-port 8000
