@@ -1,5 +1,5 @@
 name: MCP Memory Service
-version: "0.2.1"
+version: "0.3.0"
 slug: mcp_memory
 description: Persistent memory backend for AI agents (REST + MCP, sqlite-vec)
 url: "https://github.com/doobidoo/mcp-memory-service"
@@ -9,11 +9,15 @@ arch:
 startup: services
 boot: auto
 init: false
+ingress: true
+ingress_port: 8000
+panel_icon: mdi:brain
+panel_title: MCP Memory
 ports:
   8000/tcp: 8000
   8765/tcp: 8765
 ports_description:
-  8000/tcp: REST API & web dashboard
+  8000/tcp: REST API & web dashboard (also available via Ingress)
   8765/tcp: MCP streamable HTTP / SSE
 map:
   - share:rw
