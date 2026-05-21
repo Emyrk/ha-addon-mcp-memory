@@ -1,3 +1,3 @@
 build_from:
-  amd64: ghcr.io/doobidoo/mcp-memory-service:latest
-  aarch64: ghcr.io/doobidoo/mcp-memory-service:latest
+  amd64: docker.io/doobidoo/mcp-memory-service:10.63.0-slim
+  aarch64: docker.io/doobidoo/mcp-memory-service:10.63.0-slim
