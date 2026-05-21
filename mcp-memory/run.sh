@@ -35,5 +35,23 @@ if [ "${ALLOW_ANON}" = "true" ]; then
     export MCP_ALLOW_ANONYMOUS_ACCESS="true"
 fi
 
-echo "[mcp-memory] Starting (backend=${MCP_MEMORY_STORAGE_BACKEND}, log=${LOG_LEVEL})"
-exec memory server --http --http-host 0.0.0.0 --http-port 8000
+echo "[mcp-memory] Starting backend on 127.0.0.1:8001 (behind nginx on :8000)"
+
+# Backend listens only on loopback; nginx is the public face on :8000.
+memory server --http --http-host 127.0.0.1 --http-port 8001 &
+BACKEND_PID=$!
+
+# Forward signals so HA stop/restart is clean.
+trap 'echo "[mcp-memory] stopping"; kill -TERM $BACKEND_PID 2>/dev/null; kill -TERM $NGINX_PID 2>/dev/null; wait' TERM INT
+
+echo "[mcp-memory] Starting nginx ingress-rewriter on :8000"
+nginx &
+NGINX_PID=$!
+
+# Exit when either process dies so HA can restart the container.
+wait -n $BACKEND_PID $NGINX_PID
+EXIT_CODE=$?
+echo "[mcp-memory] child exited with $EXIT_CODE; shutting down"
+kill -TERM $BACKEND_PID $NGINX_PID 2>/dev/null
+wait
+exit $EXIT_CODE
