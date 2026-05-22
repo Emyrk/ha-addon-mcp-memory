@@ -38,16 +38,23 @@ RUN set -eux; \
     sed -i 's|href="/api-overview"|href="api-overview"|g' index.html; \
     sed -i "s|?v=10\\.7\\.1-auth-fix|?v=${BUST}|g"        index.html; \
     # ---- app.js ----
-    sed -i "s|this\\.apiBase = '/api'|this.apiBase = 'api'|g" app.js; \
-    sed -i "s|fetch('/static/|fetch('static/|g"              app.js; \
-    sed -i "s|fetch(\`/static/|fetch(\`static/|g"            app.js; \
-    sed -i "s|fetch('/api/|fetch('api/|g"                    app.js; \
-    sed -i "s|window\\.location\\.href = '/|window.location.href = '|g" app.js; \
+    # Use the window.__MCP_BASE__ global injected by ingress_wrapper.py.
+    # Under HA Ingress, this is the per-session prefix (e.g.
+    # `/api/hassio_ingress/<token>`). On direct LAN access the wrapper
+    # doesn't run, so the global is undefined → empty string → the
+    # dashboard hits paths at the addon's host root, exactly as before.
+    sed -i "s|this\\.apiBase = '/api'|this.apiBase = (window.__MCP_BASE__ || '') + '/api'|g" app.js; \
+    sed -i "s|fetch('/static/|fetch((window.__MCP_BASE__ || '') + '/static/|g"   app.js; \
+    sed -i "s|fetch(\`/static/|fetch(\`\${window.__MCP_BASE__ || ''}/static/|g"  app.js; \
+    sed -i "s|fetch('/api/|fetch((window.__MCP_BASE__ || '') + '/api/|g"         app.js; \
+    sed -i "s|window\\.location\\.href = '/|window.location.href = (window.__MCP_BASE__ || '') + '/|g" app.js; \
+    # SSE/EventSource: replace the explicit `window.location.origin` base
+    # so the URL is built with our ingress prefix instead.
+    sed -i "s|window\\.location\\.origin|((window.__MCP_BASE__) ? new URL(window.__MCP_BASE__, window.location.origin).toString() : window.location.origin)|g" app.js; \
     # ---- Build-time assertions ----
-    grep -q "this.apiBase = 'api'"            app.js; \
-    ! grep -q "this.apiBase = '/api'"         app.js; \
-    ! grep -nE "fetch\\('/(api|static)/"      app.js; \
-    grep -q "?v=${BUST}"                      index.html; \
+    grep -q "window.__MCP_BASE__" app.js; \
+    ! grep -q "this.apiBase = '/api'" app.js; \
+    grep -q "?v=${BUST}" index.html; \
     echo "[build] cache-buster: ${BUST}"
 
 # Drop in our ingress middleware wrapper.

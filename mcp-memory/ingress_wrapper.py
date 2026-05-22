@@ -58,9 +58,18 @@ class IngressBaseHrefMiddleware(BaseHTTPMiddleware):
         async for chunk in response.body_iterator:
             body += chunk
 
+        # 1) <base href> for any <link>/<script>/<a> still using relative URLs.
+        # 2) <meta name="mcp-ingress-prefix"> for diagnostics.
+        # 3) An INLINE <script> that sets window.__MCP_BASE__ BEFORE app.js
+        #    loads, so the patched app.js can build absolute fetch URLs.
+        #    This is the bulletproof path: no relative URL resolution
+        #    means nothing for HA/iframe/baseURI to interfere with.
         base_tag = (
             f'<base href="{ingress_path}/">'
             f'<meta name="mcp-ingress-prefix" content="{ingress_path}">'
+            f'<script>window.__MCP_BASE__={ingress_path!r};'
+            f'console.log("[mcp-memory] ingress base:", window.__MCP_BASE__);'
+            f'</script>'
         ).encode("utf-8")
 
         # Inject right after the opening <head>. Case-insensitive in case
