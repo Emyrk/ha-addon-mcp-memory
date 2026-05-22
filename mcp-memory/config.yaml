@@ -1,5 +1,5 @@
 name: MCP Memory Service
-version: "0.5.2"
+version: "0.6.0"
 slug: mcp_memory
 description: Persistent memory backend for AI agents (REST + MCP, sqlite-vec)
 url: "https://github.com/doobidoo/mcp-memory-service"

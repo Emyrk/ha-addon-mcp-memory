@@ -36,7 +36,9 @@ if [ "${ALLOW_ANON}" = "true" ]; then
 fi
 
 echo "[mcp-memory] Starting (backend=${MCP_MEMORY_STORAGE_BACKEND}, log=${LOG_LEVEL})"
-# Bind directly on 0.0.0.0:8000 — both HA Ingress and direct LAN clients
-# hit the same listener. The dashboard's static files were patched at
-# build time to use relative URLs, so no path-rewriting proxy is needed.
-exec memory server --http --http-host 0.0.0.0 --http-port 8000
+# Run via our ingress wrapper so HA Ingress's X-Ingress-Path header is
+# injected as a per-request <base href> into the dashboard HTML.
+# Direct LAN clients don't send X-Ingress-Path, so the wrapper is a
+# no-op and the dashboard works at http://<host>:8000/ unchanged.
+export PYTHONPATH=/app/src:${PYTHONPATH:-}
+exec python3 /opt/ingress_wrapper.py
