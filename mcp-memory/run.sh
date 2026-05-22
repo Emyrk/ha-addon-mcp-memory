@@ -13,6 +13,7 @@ USER_API_KEY="$(get api_key)"
 ALLOW_ANON="$(get allow_anonymous)"
 OAUTH_ENABLED="$(get oauth_enabled)"
 OAUTH_ISSUER_OPT="$(get oauth_issuer)"
+# DCR_KEY_OPT is read inside the OAUTH_ENABLED branch below.
 LOG_LEVEL_RAW="$(get log_level)"
 LOG_LEVEL="$(echo "${LOG_LEVEL_RAW:-info}" | tr '[:lower:]' '[:upper:]')"
 
@@ -108,6 +109,28 @@ PY
     export MCP_OAUTH_SQLITE_PATH="${OAUTH_DIR}/oauth.db"
     if [ -n "${OAUTH_ISSUER_OPT}" ]; then
         export MCP_OAUTH_ISSUER="${OAUTH_ISSUER_OPT}"
+    fi
+
+    # Lock down Dynamic Client Registration so randoms can't even create
+    # OAuth clients. Auto-generate a DCR key on first start and persist it
+    # so it survives restarts. Clients must POST /oauth/register with
+    # `Authorization: Bearer <dcr_key>` to register.
+    DCR_KEY_FILE="${OAUTH_DIR}/dcr_key"
+    DCR_KEY_OPT="$(get oauth_dcr_key)"
+    if [ -n "${DCR_KEY_OPT}" ]; then
+        export MCP_DCR_REGISTRATION_KEY="${DCR_KEY_OPT}"
+        echo "[mcp-memory] DCR registration locked by addon-option key"
+    elif [ -s "${DCR_KEY_FILE}" ]; then
+        export MCP_DCR_REGISTRATION_KEY="$(cat "${DCR_KEY_FILE}")"
+        echo "[mcp-memory] DCR registration locked by persisted key at ${DCR_KEY_FILE}"
+    else
+        GENERATED_DCR_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+        umask 077
+        printf '%s' "${GENERATED_DCR_KEY}" > "${DCR_KEY_FILE}"
+        export MCP_DCR_REGISTRATION_KEY="${GENERATED_DCR_KEY}"
+        echo "[mcp-memory] Auto-generated DCR registration key; persisted to ${DCR_KEY_FILE}"
+        echo "[mcp-memory] DCR key (give to OAuth clients during registration):"
+        echo "[mcp-memory]   ${GENERATED_DCR_KEY}"
     fi
     echo "[mcp-memory] OAuth 2.1 enabled (issuer=${MCP_OAUTH_ISSUER:-auto})"
 fi
