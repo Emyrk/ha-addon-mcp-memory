@@ -6,17 +6,46 @@ ENV LANG=C.UTF-8 \
 
 USER root
 
-# Install nginx (full variant) for the Ingress path-rewriting reverse proxy.
-# IMPORTANT: nginx-light DOES NOT include ngx_http_sub_module, so sub_filter
-# directives are silently ignored. Use nginx-full (or nginx-extras).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends nginx-full \
- && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /var/lib/nginx /var/log/nginx /run \
- && nginx -V 2>&1 | tr ' ' '\n' | grep -q http_sub_module \
-    || (echo "ERROR: nginx build missing http_sub_module" && exit 1)
+# ---------------------------------------------------------------------------
+# Patch the upstream dashboard to use RELATIVE URLs everywhere.
+#
+# The upstream HTML/JS ship root-absolute paths like `/api/...` and
+# `/static/...`. Under HA Ingress the page is mounted at
+# `/api/hassio_ingress/<token>/`, so root-absolute paths bypass the
+# Ingress prefix and hit HA's own domain root → every API call 404s.
+#
+# Previous attempts used an nginx sub_filter layer to rewrite responses
+# at proxy time. That worked in isolated curl tests but kept getting
+# defeated by browser caches (constant ?v= query strings) and Content-Type
+# mismatches. Patching the source at build time is dramatically simpler:
+# relative URLs resolve against `document.baseURI`, which is the iframe
+# URL under Ingress and the addon's host URL on the LAN. One config,
+# both contexts.
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    cd /app/src/mcp_memory_service/web/static; \
+    # ---- index.html ----
+    sed -i 's|href="/static/|href="static/|g'             index.html; \
+    sed -i 's|src="/static/|src="static/|g'               index.html; \
+    sed -i 's|href="/api/|href="api/|g'                   index.html; \
+    sed -i 's|href="/api-overview"|href="api-overview"|g' index.html; \
+    # ---- app.js ----
+    sed -i "s|this\\.apiBase = '/api'|this.apiBase = 'api'|g" app.js; \
+    sed -i "s|fetch('/static/|fetch('static/|g"              app.js; \
+    sed -i "s|fetch(\`/static/|fetch(\`static/|g"            app.js; \
+    sed -i "s|fetch('/api/|fetch('api/|g"                    app.js; \
+    # SSE / EventSource base must resolve under the current document
+    # path, not the origin. window.location.origin is only used in the
+    # SSE URL construction in this file, so a global swap is safe.
+    sed -i "s|window\\.location\\.origin|document.baseURI|g" app.js; \
+    # Internal navigation redirect.
+    sed -i "s|window\\.location\\.href = '/|window.location.href = '|g" app.js; \
+    # Fail the build if any patch was a no-op (e.g. upstream renamed a literal).
+    grep -q "this.apiBase = 'api'"   app.js; \
+    grep -q "document.baseURI"       app.js; \
+    ! grep -q "this.apiBase = '/api'" app.js; \
+    ! grep -nE "fetch\\('/(api|static)/" app.js
 
-COPY nginx.conf /etc/nginx/nginx.conf
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh
 
