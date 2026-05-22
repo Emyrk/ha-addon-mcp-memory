@@ -9,12 +9,42 @@ get() {
 }
 
 BACKEND="$(get backend)"
-API_KEY="$(get api_key)"
+USER_API_KEY="$(get api_key)"
 ALLOW_ANON="$(get allow_anonymous)"
+OAUTH_ENABLED="$(get oauth_enabled)"
+OAUTH_ISSUER_OPT="$(get oauth_issuer)"
 LOG_LEVEL_RAW="$(get log_level)"
 LOG_LEVEL="$(echo "${LOG_LEVEL_RAW:-info}" | tr '[:lower:]' '[:upper:]')"
 
-mkdir -p /share/mcp-memory /share/mcp-memory/backups
+mkdir -p /share/mcp-memory /share/mcp-memory/backups /share/mcp-memory/oauth
+
+# ---------------------------------------------------------------------
+# API key management
+#
+# Always have an API key set so:
+#   * Direct LAN access is authenticated by default.
+#   * Our ingress wrapper can inject the key when a request comes in
+#     through HA Ingress, so the dashboard skips its login modal
+#     (HA already authenticated the user to reach the iframe).
+#
+# Priority: addon options "api_key" > persisted file > auto-generate.
+# ---------------------------------------------------------------------
+KEY_FILE="/share/mcp-memory/api_key"
+if [ -n "${USER_API_KEY}" ]; then
+    EFFECTIVE_API_KEY="${USER_API_KEY}"
+    echo "[mcp-memory] Using API key from addon options"
+elif [ -s "${KEY_FILE}" ]; then
+    EFFECTIVE_API_KEY="$(cat "${KEY_FILE}")"
+    echo "[mcp-memory] Using persisted API key from ${KEY_FILE}"
+else
+    EFFECTIVE_API_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    umask 077
+    printf '%s' "${EFFECTIVE_API_KEY}" > "${KEY_FILE}"
+    echo "[mcp-memory] Auto-generated API key; persisted to ${KEY_FILE}"
+    echo "[mcp-memory] First-run key (also visible at ${KEY_FILE}):"
+    echo "[mcp-memory]   ${EFFECTIVE_API_KEY}"
+fi
+export MCP_API_KEY="${EFFECTIVE_API_KEY}"
 
 export MCP_MEMORY_STORAGE_BACKEND="${BACKEND:-sqlite_vec}"
 export MCP_MEMORY_SQLITE_PATH="/share/mcp-memory/memory.db"
@@ -26,13 +56,60 @@ export MCP_SSE_PORT="8765"
 export MCP_STREAMABLE_HTTP_MODE="1"
 export LOG_LEVEL
 
-if [ -n "${API_KEY}" ]; then
-    export MCP_API_KEY="${API_KEY}"
-fi
-
 if [ "${ALLOW_ANON}" = "true" ]; then
     echo "[mcp-memory] WARNING: MCP_ALLOW_ANONYMOUS_ACCESS=true — anyone on your LAN can read/write memories." >&2
     export MCP_ALLOW_ANONYMOUS_ACCESS="true"
+fi
+
+# ---------------------------------------------------------------------
+# OAuth 2.1 authorization server (for external MCP clients like
+# claude.ai). Only enable when the user opts in via the addon option,
+# because for external use you also need a stable public issuer URL
+# (typically via Cloudflare Tunnel).
+#
+# Keys are persisted to /share so JWTs survive container rebuilds.
+# Without persistence, every restart would invalidate all tokens.
+# ---------------------------------------------------------------------
+if [ "${OAUTH_ENABLED}" = "true" ]; then
+    OAUTH_DIR="/share/mcp-memory/oauth"
+    OAUTH_PRIV="${OAUTH_DIR}/private_key.pem"
+    OAUTH_PUB="${OAUTH_DIR}/public_key.pem"
+    if [ ! -s "${OAUTH_PRIV}" ] || [ ! -s "${OAUTH_PUB}" ]; then
+        echo "[mcp-memory] Generating RSA key pair for OAuth JWT signing..."
+        umask 077
+        python3 - "${OAUTH_PRIV}" "${OAUTH_PUB}" <<'PY'
+import sys
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+priv_path, pub_path = sys.argv[1], sys.argv[2]
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+with open(priv_path, "wb") as f:
+    f.write(key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ))
+with open(pub_path, "wb") as f:
+    f.write(key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ))
+PY
+        chmod 600 "${OAUTH_PRIV}"
+        chmod 644 "${OAUTH_PUB}"
+        echo "[mcp-memory] OAuth RSA keys generated in ${OAUTH_DIR}"
+    else
+        echo "[mcp-memory] Using existing OAuth RSA keys in ${OAUTH_DIR}"
+    fi
+    export MCP_OAUTH_ENABLED="true"
+    export MCP_OAUTH_PRIVATE_KEY_PATH="${OAUTH_PRIV}"
+    export MCP_OAUTH_PUBLIC_KEY_PATH="${OAUTH_PUB}"
+    export MCP_OAUTH_STORAGE_BACKEND="sqlite"
+    export MCP_OAUTH_SQLITE_PATH="${OAUTH_DIR}/oauth.db"
+    if [ -n "${OAUTH_ISSUER_OPT}" ]; then
+        export MCP_OAUTH_ISSUER="${OAUTH_ISSUER_OPT}"
+    fi
+    echo "[mcp-memory] OAuth 2.1 enabled (issuer=${MCP_OAUTH_ISSUER:-auto})"
 fi
 
 echo "[mcp-memory] Starting (backend=${MCP_MEMORY_STORAGE_BACKEND}, log=${LOG_LEVEL})"

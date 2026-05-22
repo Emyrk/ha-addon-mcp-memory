@@ -27,11 +27,41 @@ import sys
 
 import uvicorn
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 from starlette.responses import Response
 
 from mcp_memory_service.web.app import app
 
 log = logging.getLogger("mcp-memory.ingress")
+
+
+# Resolved at startup so we don't do an os.environ lookup per request.
+SERVICE_API_KEY = os.environ.get("MCP_API_KEY", "")
+
+
+class IngressAutoAuthMiddleware(BaseHTTPMiddleware):
+    """Auto-authenticate Ingress requests with the service API key.
+
+    When a request carries the HA-injected `X-Ingress-Path` header, the
+    user is by definition already authenticated by Home Assistant to even
+    reach this iframe. So we transparently add `X-API-Key: <service-key>`
+    so the upstream auth check passes and the dashboard skips its login
+    modal — matching the behavior of every other HA addon (nodered,
+    zigbee2mqtt, etc.).
+
+    Direct LAN clients don't carry the header, so they still need to
+    supply the API key themselves (or use OAuth if enabled).
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if SERVICE_API_KEY and request.headers.get("x-ingress-path"):
+            # Starlette's Request.headers is immutable; mutate the raw scope.
+            headers = list(request.scope.get("headers", []))
+            # Drop any pre-existing X-API-Key to avoid duplicates / spoofing.
+            headers = [(k, v) for (k, v) in headers if k != b"x-api-key"]
+            headers.append((b"x-api-key", SERVICE_API_KEY.encode()))
+            request.scope["headers"] = headers
+        return await call_next(request)
 
 
 class IngressBaseHrefMiddleware(BaseHTTPMiddleware):
@@ -111,16 +141,21 @@ class IngressBaseHrefMiddleware(BaseHTTPMiddleware):
         )
 
 
+# Order matters in Starlette: middleware added LAST runs FIRST on the
+# request side. We want auto-auth to be applied BEFORE upstream's auth
+# middleware sees the request, so add it last.
 app.add_middleware(IngressBaseHrefMiddleware)
+app.add_middleware(IngressAutoAuthMiddleware)
 
 
 def main():
     host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
     port = int(os.environ.get("MCP_HTTP_PORT", "8000"))
     log_level = os.environ.get("LOG_LEVEL", "info").lower()
+    auto_auth_status = "ON" if SERVICE_API_KEY else "OFF (no API key set)"
     print(
         f"[mcp-memory-ingress] uvicorn on {host}:{port} "
-        f"(log={log_level}, X-Ingress-Path → <base href> injection enabled)",
+        f"(log={log_level}, ingress auto-auth={auto_auth_status})",
         file=sys.stderr,
         flush=True,
     )
