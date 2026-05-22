@@ -22,13 +22,19 @@ USER root
 # URL under Ingress and the addon's host URL on the LAN. One config,
 # both contexts.
 # ---------------------------------------------------------------------------
+ARG BUILD_VERSION=dev
 RUN set -eux; \
     cd /app/src/mcp_memory_service/web/static; \
+    # Replace the upstream cache-buster `?v=10.7.1-auth-fix` with one that
+    # changes every addon build. Without this, HA's iframe keeps serving
+    # the previously-cached app.js even after we patched it on disk.
+    BUST="${BUILD_VERSION}-$(date +%s)"; \
     # ---- index.html ----
     sed -i 's|href="/static/|href="static/|g'             index.html; \
     sed -i 's|src="/static/|src="static/|g'               index.html; \
     sed -i 's|href="/api/|href="api/|g'                   index.html; \
     sed -i 's|href="/api-overview"|href="api-overview"|g' index.html; \
+    sed -i "s|?v=10\\.7\\.1-auth-fix|?v=${BUST}|g"        index.html; \
     # ---- app.js ----
     sed -i "s|this\\.apiBase = '/api'|this.apiBase = 'api'|g" app.js; \
     sed -i "s|fetch('/static/|fetch('static/|g"              app.js; \
@@ -44,7 +50,9 @@ RUN set -eux; \
     grep -q "this.apiBase = 'api'"   app.js; \
     grep -q "document.baseURI"       app.js; \
     ! grep -q "this.apiBase = '/api'" app.js; \
-    ! grep -nE "fetch\\('/(api|static)/" app.js
+    ! grep -nE "fetch\\('/(api|static)/" app.js; \
+    grep -q "?v=${BUST}" index.html; \
+    echo "[build] cache-buster: ${BUST}"
 
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh
