@@ -23,39 +23,13 @@ USER root
 # both contexts.
 # ---------------------------------------------------------------------------
 ARG BUILD_VERSION=dev
-RUN set -eux; \
-    cd /app/src/mcp_memory_service/web/static; \
-    # Cache-buster: change the static file ?v= query on every build so HA's
-    # frontend iframe is forced to refetch index.html/app.js/style.css.
-    BUST="${BUILD_VERSION}-$(date +%s)"; \
-    # ---- Strip root-absolute URLs in index.html so they become relative. ----
-    # Combined with the <base href> injected by ingress_wrapper.py at
-    # request time, these resolve correctly under both HA Ingress and
-    # direct LAN access.
-    sed -i 's|href="/static/|href="static/|g'             index.html; \
-    sed -i 's|src="/static/|src="static/|g'               index.html; \
-    sed -i 's|href="/api/|href="api/|g'                   index.html; \
-    sed -i 's|href="/api-overview"|href="api-overview"|g' index.html; \
-    sed -i "s|?v=10\\.7\\.1-auth-fix|?v=${BUST}|g"        index.html; \
-    # ---- app.js ----
-    # Use the window.__MCP_BASE__ global injected by ingress_wrapper.py.
-    # Under HA Ingress, this is the per-session prefix (e.g.
-    # `/api/hassio_ingress/<token>`). On direct LAN access the wrapper
-    # doesn't run, so the global is undefined → empty string → the
-    # dashboard hits paths at the addon's host root, exactly as before.
-    sed -i "s|this\\.apiBase = '/api'|this.apiBase = (window.__MCP_BASE__ || '') + '/api'|g" app.js; \
-    sed -i "s|fetch('/static/|fetch((window.__MCP_BASE__ || '') + '/static/|g"   app.js; \
-    sed -i "s|fetch(\`/static/|fetch(\`\${window.__MCP_BASE__ || ''}/static/|g"  app.js; \
-    sed -i "s|fetch('/api/|fetch((window.__MCP_BASE__ || '') + '/api/|g"         app.js; \
-    sed -i "s|window\\.location\\.href = '/|window.location.href = (window.__MCP_BASE__ || '') + '/|g" app.js; \
-    # SSE/EventSource: replace the explicit `window.location.origin` base
-    # so the URL is built with our ingress prefix instead.
-    sed -i "s|window\\.location\\.origin|((window.__MCP_BASE__) ? new URL(window.__MCP_BASE__, window.location.origin).toString() : window.location.origin)|g" app.js; \
-    # ---- Build-time assertions ----
-    grep -q "window.__MCP_BASE__" app.js; \
-    ! grep -q "this.apiBase = '/api'" app.js; \
-    grep -q "?v=${BUST}" index.html; \
-    echo "[build] cache-buster: ${BUST}"
+
+# Patches are applied by a Python script — shell + sed quoting got
+# unmanageable once the JS replacements contained `||`, backticks, and
+# template literals. The script also fails the build loudly if any
+# expected upstream string is missing.
+COPY patch_dashboard.py /tmp/patch_dashboard.py
+RUN BUILD_VERSION="${BUILD_VERSION}" python3 /tmp/patch_dashboard.py
 
 # Drop in our ingress middleware wrapper.
 COPY ingress_wrapper.py /opt/ingress_wrapper.py
