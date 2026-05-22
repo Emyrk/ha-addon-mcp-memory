@@ -82,13 +82,27 @@ class IngressBaseHrefMiddleware(BaseHTTPMiddleware):
             insert_at = head_idx + len(b"<head>")
             body = body[:insert_at] + base_tag + body[insert_at:]
 
-        # Drop length/encoding headers so Starlette recomputes them; we
-        # also keep CSP/cache headers from the original response.
+        # Drop length/encoding/cache headers; Starlette will recompute
+        # length, and we'll force no-cache so browsers refetch the HTML
+        # after every addon update (the inline window.__MCP_BASE__ also
+        # needs to reflect the current Ingress session token).
         new_headers = {
             k: v
             for k, v in response.headers.items()
-            if k.lower() not in {"content-length", "content-encoding"}
+            if k.lower()
+            not in {
+                "content-length",
+                "content-encoding",
+                "cache-control",
+                "expires",
+                "pragma",
+                "etag",
+                "last-modified",
+            }
         }
+        new_headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        new_headers["Pragma"] = "no-cache"
+        new_headers["Expires"] = "0"
         return Response(
             content=body,
             status_code=response.status_code,
