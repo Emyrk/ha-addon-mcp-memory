@@ -1,5 +1,5 @@
 name: MCP Memory Service
-version: "0.7.1"
+version: "0.7.2"
 slug: mcp_memory
 description: Persistent memory backend for AI agents (REST + MCP, sqlite-vec)
 url: "https://github.com/doobidoo/mcp-memory-service"
@@ -34,8 +34,8 @@ options:
 schema:
   backend: list(sqlite_vec|hybrid|cloudflare)
   allow_anonymous: bool
-  api_key: str
+  api_key: str?
   oauth_enabled: bool
-  oauth_issuer: str
-  oauth_dcr_key: str
+  oauth_issuer: str?
+  oauth_dcr_key: str?
   log_level: list(debug|info|warning|error)
