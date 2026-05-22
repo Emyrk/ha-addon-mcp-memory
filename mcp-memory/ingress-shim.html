@@ -1,0 +1,23 @@
+<!-- MCP_INGRESS_SHIM: pin <base> to the iframe's own path so relative URLs
+     (api/..., static/...) resolve under HA's Ingress prefix.  Without
+     this, HA's frontend leaves document.baseURI at the origin root and
+     every API call 404s. -->
+<script>(function(){
+  try {
+    var p = window.location.pathname || "/";
+    // Drop the final path segment unless we already end in "/".
+    if (!/\/$/.test(p)) p = p.replace(/[^/]*$/, "");
+    // Remove any pre-existing <base> tags (HA-injected or otherwise).
+    var existing = document.getElementsByTagName("base");
+    while (existing.length) existing[0].parentNode.removeChild(existing[0]);
+    var b = document.createElement("base");
+    b.setAttribute("href", p);
+    // Insert as the FIRST child of <head> so subsequent <link>/<script>
+    // tags resolve against it during parsing.
+    document.head.insertBefore(b, document.head.firstChild);
+    // Debug breadcrumb visible in DevTools console.
+    console.log("[mcp-memory shim] base set to", p, "baseURI=", document.baseURI);
+  } catch (e) {
+    console.error("[mcp-memory shim] failed:", e);
+  }
+})();</script>
